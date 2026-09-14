@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: stg_lessons
+    description: One row per lesson booking, cleaned and cast from the raw seed.
+    columns:
+      - name: lesson_id
+        data_type: integer
+        description: Surrogate key for the lesson booking. Unique per lesson.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: student_id
+        data_type: integer
+        description: Foreign key to stg_students.student_id — the student who booked this lesson.
+
+      - name: booked_at
+        data_type: timestamp without time zone
+        description: Timestamp the lesson was booked.
+
+      - name: hours_booked
+        data_type: numeric
+        description: Number of hours booked for this lesson (e.g. 0.5, 1.0, 1.5, 2.0).

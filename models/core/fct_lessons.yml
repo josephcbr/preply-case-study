@@ -1,0 +1,85 @@
+version: 2
+
+models:
+  - name: fct_lessons
+    description: >
+      One row per (lesson, contributing payment cycle) — how many of a
+      lesson's hours count against which cycle, and the running remaining
+      balance in that cycle afterward. Usually one row per lesson (grain
+      matches stg_lessons), except when a lesson falls in the overlap
+      between two concurrently-valid cycles (the student topped up before
+      their previous cycle expired), in which case it's split into two
+      rows, one per contributing cycle. Capped at 2-way overlap — see
+      the max_occurrences test on lesson_id below.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - lesson_id
+              - payment_rk
+    columns:
+      - name: lesson_id
+        data_type: integer
+        description: >
+          FK to stg_lessons.lesson_id. Not unique on its own in this table
+          — a split lesson appears twice, once per contributing cycle.
+        data_tests:
+          - max_occurrences:
+              arguments:
+                max_count: 2
+
+      - name: student_id
+        data_type: integer
+        description: Foreign key to dim_student.student_id.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_student')
+                field: student_id
+
+      - name: booked_at
+        data_type: timestamp without time zone
+        description: Timestamp the lesson was booked. Identical across both rows of a split lesson.
+
+      - name: hours_allocated
+        data_type: numeric
+        description: >
+          Hours from this lesson counted against this specific cycle. Equal
+          to the lesson's full hours_booked for an unambiguous (single-cycle)
+          lesson; a fraction of it for a split lesson, such that the two
+          rows' hours_allocated sum back to the original hours_booked.
+
+      - name: payment_rk
+        data_type: bigint
+        description: The payment cycle this hours_allocated amount counts against (see fct_student_paid_hours.payment_rk).
+        data_tests:
+          - not_null
+
+      - name: valid_from
+        data_type: timestamp without time zone
+        description: Start of this payment cycle (from fct_student_paid_hours).
+
+      - name: valid_to
+        data_type: timestamp without time zone
+        description: End of this payment cycle (from fct_student_paid_hours).
+
+      - name: total_cycle_hours
+        data_type: numeric
+        description: Total hours purchased for this cycle (hours_purchased from fct_student_paid_hours).
+
+      - name: price_per_hour_usd
+        data_type: numeric
+        description: Price per hour for this cycle's payment.
+
+      - name: remaining_cycle_hours
+        data_type: numeric
+        description: >
+          Running balance: total_cycle_hours minus the cumulative
+          hours_allocated to this cycle so far, ordered by booked_at.
+          Reflects only lessons that have happened, not a day-level view —
+          see student_breakage_daily for that.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"

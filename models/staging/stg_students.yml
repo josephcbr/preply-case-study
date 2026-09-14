@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: stg_students
+    description: One row per student, cleaned and cast from the raw seed.
+    columns:
+      - name: student_id
+        data_type: integer
+        description: Surrogate key for the student. Unique per student.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: joined_at
+        data_type: timestamp without time zone
+        description: Timestamp the student joined the platform.
+
+      - name: country_code
+        data_type: text
+        description: Two-letter country code of the student.
+
+      - name: acquisition_channel
+        data_type: text
+        description: Marketing channel that acquired the student.
+
+      - name: persona
+        data_type: text
+        description: The student's assigned use-case persona.
+
+      - name: first_subject
+        data_type: text
+        description: The first subject or language the student signed up to learn.

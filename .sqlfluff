@@ -1,0 +1,17 @@
+[sqlfluff]
+templater = dbt
+dialect = postgres
+exclude_rules = LT05
+
+[sqlfluff:templater:dbt]
+project_dir = .
+profiles_dir = .
+profile = dbt_case_study_sandbox
+target = dev
+
+[sqlfluff:indentation]
+tab_space_size = 4
+indented_on_contents = False
+
+[sqlfluff:layout:type:comma]
+line_position = trailing

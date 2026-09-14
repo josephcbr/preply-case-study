@@ -1,0 +1,260 @@
+version: 2
+
+models:
+  - name: student_breakage_daily
+    description: >
+      Day-level view of every student's payment cycles: how many hours have
+      been used so far, and predicted vs. actual breakage (unused purchased
+      hours) for that cycle. Grain is one row per (student, payment cycle,
+      calendar day). Feeds the stakeholder-facing breakage visualization —
+      denormalizes student characteristics onto every row so it can be
+      sliced without further joins. An open cycle only has rows up through
+      current_date (no rows for days that haven't happened yet); a closed
+      cycle has rows for its entire window and a populated actual_breakage.
+      Also carries each student's own trailing average actual_breakage over
+      their preceding 1/3/6 cycles, as a per-student historical benchmark
+      for that cycle's predicted_breakage.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - student_id
+              - payment_rk
+              - date_day
+    columns:
+      - name: student_id
+        data_type: integer
+        description: Foreign key to dim_student.student_id.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_student')
+                field: student_id
+
+      - name: payment_rk
+        data_type: bigint
+        description: The payment cycle this row belongs to (see fct_student_paid_hours.payment_rk) — 1-indexed sequence of a student's own payments.
+        data_tests:
+          - not_null
+
+      - name: date_day
+        data_type: date
+        description: The calendar day this row reports on.
+        data_tests:
+          - not_null
+
+      - name: week_start_date
+        data_type: date
+        description: Start date of the calendar week containing date_day (from dim_date).
+
+      - name: week_end_date
+        data_type: date
+        description: End date of the calendar week containing date_day (from dim_date).
+
+      - name: month_start_date
+        data_type: date
+        description: First day of the month containing date_day (from dim_date).
+
+      - name: month_end_date
+        data_type: date
+        description: Last day of the month containing date_day (from dim_date).
+
+      - name: days_elapsed_in_cycle
+        data_type: integer
+        description: 1-indexed day number within this cycle (1 on the first day of the cycle).
+
+      - name: total_cycle_days
+        data_type: integer
+        description: Length of this cycle in days (derived from cycle_start_date/cycle_end_date, not hardcoded from the cycle_length var).
+
+      - name: cycle_start_date
+        data_type: date
+        description: Calendar date this cycle began (valid_from, truncated to a date).
+
+      - name: cycle_end_date
+        data_type: date
+        description: Calendar date this cycle ends (valid_to, truncated to a date) — exclusive; the cycle's last real day is cycle_end_date - 1.
+
+      - name: is_cycle_closed
+        data_type: boolean
+        description: True if this cycle's valid_to has already passed as of current_date — i.e. actual_breakage is known rather than only predicted.
+
+      - name: hours_purchased
+        data_type: numeric
+        description: Total hours purchased for this cycle.
+
+      - name: price_per_hour_usd
+        data_type: numeric
+        description: Price per hour for this cycle's payment, in USD. Varies independently of plan size — e.g. a 4-hour plan alone has 45 distinct prices in this dataset.
+
+      - name: hours_used_that_day
+        data_type: numeric
+        description: Hours consumed on this specific day (0 on days with no lesson).
+
+      - name: cumulative_hours_used
+        data_type: numeric
+        description: Running total of hours consumed in this cycle, from cycle_start_date through date_day inclusive.
+
+      - name: current_cycle_avg_hours_per_day
+        data_type: numeric
+        description: This cycle's own pace so far — cumulative_hours_used / days_elapsed_in_cycle. Noisy on early days (little data yet); see prediction_source.
+
+      - name: historic_avg_hours_per_day
+        data_type: numeric
+        description: >
+          This student's own average final pace (final hours used / cycle
+          length) across all of their prior completed cycles, unbounded —
+          not just a fixed last-N. Null if this is their first cycle (no
+          history yet).
+
+      - name: n_historic_completed_cycles
+        data_type: bigint
+        description: How many of this student's prior cycles have closed and back historic_avg_hours_per_day. 0 on a student's first cycle.
+
+      - name: prediction_source
+        data_type: text
+        description: >
+          Which pace fed predicted_hours_used_by_cycle_end for this row:
+          'historic_cycle_average' for days_elapsed_in_cycle < 15 (this
+          cycle's own pace is based on too little data to trust yet — falls
+          back to current_cycle_avg_hours_per_day if there's no history),
+          'current_cycle_pace' from day 15 on, once the cycle has enough of
+          its own data.
+
+      - name: predicted_hours_used_by_cycle_end
+        data_type: numeric
+        description: >
+          Projection of total cycle consumption: the pace named in
+          prediction_source, multiplied by total_cycle_days. Recomputed
+          fresh every day, so it moves as more of the cycle plays out (and
+          jumps once at day 15, when the pace source switches). Floored at
+          cumulative_hours_used — projected usage can never be less than
+          usage that's already happened — and capped at hours_purchased, so
+          it always sits between the two.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= cumulative_hours_used"
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "<= hours_purchased"
+
+      - name: predicted_breakage
+        data_type: numeric
+        description: >
+          hours_purchased minus predicted_hours_used_by_cycle_end. The day's
+          best estimate of unused hours at cycle end. Guaranteed >= 0
+          because predicted_hours_used_by_cycle_end is itself capped at
+          hours_purchased. Available for every row, open or closed cycles
+          alike; on a closed cycle's last day it equals actual_breakage
+          exactly.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: actual_breakage
+        data_type: numeric
+        description: >
+          hours_purchased minus the cycle's final total consumption. Only
+          populated once is_cycle_closed is true (null on open cycles,
+          since the true figure isn't known yet); the same value repeats
+          on every row of a closed cycle so a chart can show the predicted
+          line converging to it.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+              config:
+                where: "actual_breakage is not null"
+
+      - name: commission_usd_that_day
+        data_type: numeric
+        description: Commission earned on this specific day — 20% of the value of hours_used_that_day, at this cycle's price_per_hour_usd.
+
+      - name: cumulative_commission_usd
+        data_type: numeric
+        description: Running total of commission earned in this cycle so far — 20% of the value of cumulative_hours_used.
+
+      - name: predicted_breakage_usd
+        data_type: numeric
+        description: predicted_breakage converted to dollars at this cycle's price_per_hour_usd — 100% of the value of projected unbooked hours.
+
+      - name: predicted_commission_usd
+        data_type: numeric
+        description: >
+          20% of the value of hours the cycle is projected to actually use
+          (hours_purchased - predicted_breakage, which is capped at
+          hours_purchased even when the pace projection overshoots it — a
+          student can't earn commission on hours they don't have).
+
+      - name: predicted_total_revenue_usd
+        data_type: numeric
+        description: >
+          predicted_breakage_usd + predicted_commission_usd — matches the
+          case study's worked example exactly (8hr/$10 plan, 6 used, 2
+          unbooked: $12 commission + $20 breakage = $32 total).
+
+      - name: actual_breakage_usd
+        data_type: numeric
+        description: actual_breakage converted to dollars. Null until the cycle closes, same as actual_breakage.
+
+      - name: actual_commission_usd
+        data_type: numeric
+        description: 20% of the value of hours actually booked this cycle (hours_purchased - actual_breakage). Null until the cycle closes.
+
+      - name: actual_total_revenue_usd
+        data_type: numeric
+        description: actual_breakage_usd + actual_commission_usd — the cycle's final, true total revenue. Null until the cycle closes.
+
+      - name: avg_actual_breakage_last_1_cycle
+        data_type: numeric
+        description: >
+          This student's own actual_breakage from their immediately
+          preceding cycle (payment_rk - 1). Null if this is their first
+          cycle, or if that preceding cycle hasn't closed yet.
+
+      - name: avg_actual_breakage_usd_last_1_cycle
+        data_type: numeric
+        description: avg_actual_breakage_last_1_cycle converted to dollars at that preceding cycle's own price_per_hour_usd (not this cycle's price — each cycle can be priced differently).
+
+      - name: avg_actual_breakage_last_3_cycles
+        data_type: numeric
+        description: >
+          Average actual_breakage across this student's own preceding 3
+          cycles (payment_rk - 1 through payment_rk - 3). Null unless the
+          student has actually reached 3 prior closed cycles — never a
+          partial average over fewer, and never counts a still-open
+          preceding cycle as zero.
+
+      - name: avg_actual_breakage_usd_last_3_cycles
+        data_type: numeric
+        description: >
+          Dollar version of avg_actual_breakage_last_3_cycles — the average
+          of each of those 3 cycles' own actual_breakage_usd (each priced
+          individually), not the hours average multiplied by a single price.
+
+      - name: avg_actual_breakage_last_6_cycles
+        data_type: numeric
+        description: Same as avg_actual_breakage_last_3_cycles, but requires 6 preceding closed cycles rather than 3.
+
+      - name: avg_actual_breakage_usd_last_6_cycles
+        data_type: numeric
+        description: Dollar version of avg_actual_breakage_last_6_cycles, computed the same way as avg_actual_breakage_usd_last_3_cycles.
+
+      - name: country_code
+        data_type: text
+        description: Two-letter country code of the student (from dim_student).
+
+      - name: acquisition_channel
+        data_type: text
+        description: Marketing channel that acquired the student (from dim_student).
+
+      - name: persona
+        data_type: text
+        description: The student's assigned use-case persona (from dim_student).
+
+      - name: first_subject
+        data_type: text
+        description: The first subject or language the student signed up to learn (from dim_student).

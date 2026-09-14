@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: dim_student
+    description: >
+      One row per student, with attributes from stg_students plus a
+      snapshot of their current payment-cycle standing based on their
+      most recent payment.
+    columns:
+      - name: student_id
+        data_type: integer
+        description: Surrogate key for the student. Unique per student.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: joined_at
+        data_type: timestamp without time zone
+        description: Timestamp the student joined the platform.
+
+      - name: country_code
+        data_type: text
+        description: Two-letter country code of the student.
+
+      - name: acquisition_channel
+        data_type: text
+        description: Marketing channel that acquired the student.
+
+      - name: persona
+        data_type: text
+        description: The student's assigned use-case persona.
+
+      - name: first_subject
+        data_type: text
+        description: The first subject or language the student signed up to learn.
+
+      - name: student_status
+        data_type: text
+        description: >
+          Derived status from the student's most recent payment: 'Inactive'
+          if they've never paid, 'Active' if within cycle_length days of
+          that payment, otherwise 'Expired'.
+
+      - name: latest_cycle_end_date
+        data_type: timestamp without time zone
+        description: >
+          End date of the student's most recent payment cycle
+          (latest payment date + cycle_length days). Null if the student
+          has never made a payment.

@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: stg_payments
+    description: One row per payment (a purchase of a block of lesson hours), cleaned and cast from the raw seed.
+    columns:
+      - name: payment_id
+        data_type: integer
+        description: Surrogate key for the payment. Unique per payment.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: student_id
+        data_type: integer
+        description: Foreign key to stg_students.student_id — the student who made this payment.
+
+      - name: paid_at
+        data_type: timestamp without time zone
+        description: Timestamp the payment was made.
+
+      - name: hours_purchased
+        data_type: numeric
+        description: Number of lesson hours purchased in this payment.
+
+      - name: price_per_hour_usd
+        data_type: numeric
+        description: Price per hour paid, in USD.
+
+      - name: payment_amount_usd
+        data_type: numeric
+        description: Total amount paid for this payment (hours_purchased * price_per_hour_usd), in USD.

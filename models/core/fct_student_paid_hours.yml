@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: fct_student_paid_hours
+    description: >
+      One row per payment, representing one payment cycle for a student.
+      valid_from/valid_to define the cycle window the purchased hours are
+      meant to be used within.
+    columns:
+      - name: payment_id
+        data_type: integer
+        description: Surrogate key for the payment. Grain of this model — unique per payment/cycle.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: student_id
+        data_type: integer
+        description: Foreign key to dim_student.student_id — the student who made this payment.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_student')
+                field: student_id
+
+      - name: valid_from
+        data_type: timestamp without time zone
+        description: Start of this payment cycle — the timestamp the payment was made.
+
+      - name: valid_to
+        data_type: timestamp without time zone
+        description: End of this payment cycle — valid_from plus cycle_length days.
+
+      - name: hours_purchased
+        data_type: numeric
+        description: Number of lesson hours purchased in this payment/cycle.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> 0"
+
+      - name: price_per_hour_usd
+        data_type: numeric
+        description: Price per hour paid, in USD.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> 0"
+
+      - name: payment_amount_usd
+        data_type: numeric
+        description: Total amount paid for this payment (hours_purchased * price_per_hour_usd), in USD.
+
+      - name: payment_rk
+        data_type: bigint
+        description: 1-indexed sequence of this payment within the student's own payment history, ordered by valid_from (1 = first payment/cycle).
